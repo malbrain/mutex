@@ -16,30 +16,24 @@
 #ifdef unix
 #define pause() asm volatile("pause\n": : : "memory")
 
-void mutex_lock(char* mutex) {
+void mutex_lock(volatile char* mutex) {
 int spinCount = 16;
 int prev, idx;
 
-do {
-	//  see if we can get write access
-	//	with no readers
-
-	if(*mutex & 1) {
+  do {
+	if(*mutex & 1)
 		prev = 1;
-	} else {
+	else
 		prev = __sync_fetch_and_or(mutex, 1);
-	}
 
 	if( ~prev & 1 )
 		return;
 
-	for (idx = 0; idx < spinCount; idx++) {
+	for (idx = 0; idx < spinCount; idx++)
 		pause();
-	}
 
-	if (spinCount < 16*1024*1024) {
+	if (spinCount < 16*1024*1024)
 		spinCount *= 2;
-	}
   } while( 1 );
 }
 
@@ -70,33 +64,29 @@ void ticket_unlock(Ticket* ticket) {
 }
 #else
 
-void mutex_lock(char* mutex) {
+void mutex_lock(volatile char* mutex) {
 int spinCount = 16;
 int prev, idx;
 
-do {
+  do {
 	//  see if we can get write access
 	//	with no readers
 
-	if(*mutex & 1) {
+	if(*mutex & 1)
 		prev = 1;
-	} else {
+	else
 		prev = _InterlockedOr8(mutex, 1);
-	}
 
 	if( ~prev & 1 )
 		return;
 
-	for (idx = 0; idx < spinCount; idx++) {
+	for (idx = 0; idx < spinCount; idx++)
 		YieldProcessor();
-	}
 
-	if (spinCount < 16*1024*1024) {
+	if (spinCount < 16*1024*1024)
 		spinCount *= 2;
-	}
   } while( 1 );
 }
-
 
 void mutex_unlock(char* mutex) {
 	*mutex = 0;
@@ -109,13 +99,11 @@ uint32_t ours;
 	ours = _InterlockedIncrement(ticket->next) - 1;
 
 	while( ours != *ticket->serving ) {
-		for (idx = 0; idx < spinCount; idx++) {
+		for (idx = 0; idx < spinCount; idx++)
 			YieldProcessor();
-		}
 
-		if (spinCount < 16*1024*1024) {
+		if (spinCount < 16*1024*1024)
 			spinCount *= 2;
-		}
 	}
 }
 
