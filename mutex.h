@@ -4,15 +4,41 @@
 #include <stdint.h>
 
 typedef union {
+#ifdef FUTEX
   struct {
+	volatile uint16_t lock[1];
+	uint16_t futex;
+  };
+  uint32_t bits[1];
+#else
+  volatile char lock[1];
+#endif
+} Mutex;
+
+typedef struct {
 	volatile uint16_t serving[1];
 	volatile uint16_t next[1];
-  };
-  uint32_t bits;
 } Ticket;
 
-void mutex_lock(volatile char* mutex);
-void mutex_unlock(volatile char* mutex);
+typedef struct {
+  volatile void *next;
+#ifdef FUTEX
+  union {
+	struct {
+	  volatile uint16_t lock[1];
+	  uint16_t futex;
+	};
+	uint32_t bits[1];
+  };
+#else
+  volatile char lock[1];
+#endif
+} MCS;
+
+void mcs_lock(MCS **mutex, MCS *qnode);
+void mcs_unlock(MCS **mutex, MCS *qnode);
+void mutex_lock(Mutex* mutex);
+void mutex_unlock(Mutex* mutex);
 void ticket_lock(Ticket* ticket);
 void ticket_unlock(Ticket* ticket);
 

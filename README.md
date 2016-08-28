@@ -3,8 +3,22 @@ Compact mutex latch and ticket latch for linux &amp; windows
 
 The mutex latch uses one byte for the latch and is obtained and released by:
 
-    mutex_lock(volatile char *latch);
-    mutex_unlock(volatile char *latch);
+    mutex_lock(Mutex *latch);
+    mutex_unlock(Mutex *latch);
+
+  The Mutex structure is defined as:
+
+    typedef union {
+    #ifdef FUTEX
+      struct {
+        volatile uint16_t lock[1];
+        uint16_t futex;
+      };
+      uint32_t bits[1];
+    #else
+      volatile char lock[1];
+    #endif
+    } Mutex;
   
 The ticket latch uses two 16 bit shorts and is obtained and released by:
 

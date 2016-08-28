@@ -1,21 +1,23 @@
-//  mutex and ticket lock implmentation
+//  mutex, MCS and ticket lock implmentation
 
 //  please report bugs located to the program author,
 //  malbrain@cal.berkeley.edu
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <process.h>
-#endif
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <process.h>
+#else
+#include <pthread.h>
+#endif
+
 #include "mutex.h"
 
-#ifdef linux
+#ifdef FUTEX
 #include <linux/futex.h>
 #include <limits.h>
 
@@ -30,15 +32,21 @@ int sys_futex(void *addr1, int op, int val1, struct timespec *timeout, void *add
 #ifdef unix
 #define pause() asm volatile("pause\n": : : "memory")
 
-void mutex_spin (int *cnt) {
+void lock_sleep (int cnt) {
 struct timespec ts[1];
-volatile int idx;
-
-	if (*cnt < 8192)
-	  *cnt += *cnt / 8;
 
 	ts->tv_sec = 0;
-	ts->tv_nsec = *cnt;
+	ts->tv_nsec = cnt;
+	nanosleep(ts, NULL);
+}
+
+int lock_spin (int *cnt) {
+volatile int idx;
+
+	if (!*cnt)
+	  *cnt = 8;
+	else if (*cnt < 8192)
+	  *cnt += *cnt / 8;
 
 	if (*cnt < 1024 )
 	  for (idx = 0; idx < *cnt; idx++)
@@ -46,30 +54,111 @@ volatile int idx;
 	else if (*cnt < 8192)
 		sched_yield();
 	else
-		nanosleep(ts, NULL);
+		return 1;
+
+	return 0;
 }
 
-void mutex_lock(volatile char* mutex) {
-uint32_t spinCount = 16;
+#define system_lock(mutex) pthread_mutex_lock(mutex)
+#define system_unlock(mutex) pthread_mutex_unlock(mutex)
 
-  while (__sync_fetch_and_or(mutex, 1) & 1)
-	while (*mutex & 1)
-	  mutex_spin (&spinCount);
+void mcs_lock (MCS **lock, MCS *qnode) {
+uint32_t spinCount = 0;
+MCS *predecessor;
+
+	qnode->next = NULL;
+	*qnode->lock = 0;
+#ifdef FUTEX
+	qnode->futex = 0;
+#endif
+
+	predecessor = __sync_lock_test_and_set (lock, qnode);
+
+	// MCS lock is idle
+
+	if (!predecessor)
+	  return;
+
+	// turn on lock bit
+
+	*qnode->lock = 1;
+	predecessor->next = qnode;
+
+	// wait for lock bit to go off
+
+	while (*qnode->lock) {
+	  if (lock_spin (&spinCount)) {
+#ifndef FUTEX
+		lock_sleep(spinCount);
+#else
+		qnode->futex = 1;
+		sys_futex ((void *)qnode->bits, FUTEX_WAIT, 0x10001, NULL, NULL, 0);
+#endif
+	  }
+	}
 }
 
-void mutex_unlock(volatile char* mutex) {
+void mcs_unlock (MCS **lock, MCS *qnode) {
+uint32_t spinCount = 0;
+MCS *next;
+
+	//	is there no next queue entry?
+
+	if (!qnode->next) {
+		if (__sync_bool_compare_and_swap (lock, qnode, 0LL))
+			return;
+
+		//  wait for next queue entry to install itself
+
+		while (!qnode->next)
+		  lock_spin (&spinCount);
+	}
+
+	// turn off lock bit and wake up next queue entry
+
+	next = (MCS *)qnode->next;
+	*next->lock = 0;
+
+#ifdef FUTEX
+	if (next->futex)
+ 		sys_futex( (void *)next->bits, FUTEX_WAKE, 1, NULL, NULL, 0);
+#endif
+}
+
+void mutex_lock(Mutex* mutex) {
+uint32_t spinCount = 0;
+
+  while (__sync_fetch_and_or(mutex->lock, 1) & 1)
+	while (*mutex->lock)
+	  if (lock_spin (&spinCount)) {
+#ifndef FUTEX
+		lock_sleep(spinCount);
+#else
+		mutex->futex = 1;
+		sys_futex ((void *)mutex->bits, FUTEX_WAIT, 0x10001, NULL, NULL, 0);
+#endif
+	  }
+}
+
+void mutex_unlock(Mutex* mutex) {
 	asm volatile ("" ::: "memory");
-	*mutex = 0;
+	*mutex->lock = 0;
+#ifdef FUTEX
+	if (mutex->futex) {
+ 		sys_futex( (void *)mutex->lock, FUTEX_WAKE, 1, NULL, NULL, 0);
+		mutex->futex = 0;
+	}
+#endif
 }
 
 void ticket_lock(Ticket* ticket) {
-uint32_t spinCount = 16;
+uint32_t spinCount = 0;
 uint16_t ours;
 
 	ours = __sync_fetch_and_add(ticket->next, 1);
 
 	while (ours != ticket->serving[0])
-	  mutex_spin (&spinCount);
+	  lock_spin (&spinCount);
 }
 
 void ticket_unlock(Ticket* ticket) {
@@ -93,7 +182,7 @@ void nanosleep (const uint32_t ns, HANDLE *timer)
 	WaitForSingleObject (*timer, INFINITE);
 }
 
-void mutex_spin (uint32_t *cnt, HANDLE *timer) {
+int lock_spin (uint32_t *cnt) {
 volatile int idx;
 
 	if (*cnt < 8192)
@@ -105,34 +194,40 @@ volatile int idx;
 	else if (*cnt < 8192)
 		SwitchToThread();
 	else
-		nanosleep(*cnt, timer);
-}
+		return 1;
 
-void mutex_lock(volatile char* mutex) {
-uint32_t spinCount = 16;
+	return 0;
+}
+#define system_lock(mutex)	EnterCriticalSection(mutex)
+#define system_unlock(mutex) LeaveCriticalSection(mutex)
+
+void mutex_lock(Mutex* mutex) {
+uint32_t spinCount = 0;
 HANDLE timer = NULL;
 
-  while (_InterlockedOr8(mutex, 1) & 1)
-	while (*mutex & 1)
-	  mutex_spin(&spinCount, &timer);
+  while (_InterlockedOr8(mutex->lock, 1) & 1)
+	while (*mutex->lock & 1)
+	  if (lock_spin(&spinCount))
+		nanosleep(spinCount, &timer);
 
   if (timer)
 	CloseHandle(timer);
 }
 
-void mutex_unlock(volatile char* mutex) {
-	*mutex = 0;
+void mutex_unlock(Mutex* mutex) {
+	*mutex->lock = 0;
 }
 
 void ticket_lock(Ticket* ticket) {
-uint32_t spinCount = 16;
+uint32_t spinCount = 0;
 HANDLE timer = NULL;
 uint16_t ours;
 
 	ours = (uint16_t)_InterlockedIncrement16(ticket->next) - 1;
 
 	while( ours != ticket->serving[0] )
-	  mutex_spin(&spinCount, &timer);
+	  if (lock_spin(&spinCount))
+		nanosleep(spinCount, &timer);
 
 	if (timer)
 		CloseHandle(timer);
@@ -145,19 +240,25 @@ void ticket_unlock(Ticket* ticket) {
 
 #ifdef STANDALONE
 #ifdef unix
-
+pthread_mutex_t sysmutex[1] = {PTHREAD_MUTEX_INITIALIZER};
 unsigned char Array[256] __attribute__((aligned(64)));
-volatile char mutex[1] __attribute__((aligned(64)));
 Ticket ticket[1] __attribute__((aligned(64)));
+Mutex mutex[1] __attribute__((aligned(64)));
 #else
 __declspec(align(64)) unsigned char Array[256];
 __declspec(align(64)) Ticket ticket[1];
-__declspec(align(64)) char mutex[1];
+__declspec(align(64)) Mutex mutex[1];
+CRITICAL_SECTION sysmutex[1];
 #endif
 
+int ThreadCnt = 4;
+MCS *mcs[1];
+
 enum {
+	SystemType,
 	MutexType,
-	TicketType
+	TicketType,
+	MCSType
 } lockType;
 
 #ifndef unix
@@ -228,17 +329,24 @@ UINT __stdcall testit (void *arg) {
 #endif
 uint64_t threadno = (uint64_t)arg;
 int idx, first, loop;
+MCS qnode[1];
 
-	for (loop = 0; loop < 100000000; loop++) {
+	for (loop = 0; loop < 100000000/ThreadCnt; loop++) {
 	  if (lockType == MutexType)
 		mutex_lock(mutex);
-	  else
+	  else if (lockType == TicketType)
 		ticket_lock(ticket);
+	  else if (lockType == SystemType)
+		system_lock(sysmutex);
+#ifdef linux
+	  else
+		mcs_lock (mcs, qnode);
+#endif
 
 		first = Array[0];
 
 #ifdef DEBUG
-		if (!(loop % 10000))
+		if (!(loop % 1000000))
 			fprintf(stderr, "thread %lld loop %d\n", threadno, loop);
 #endif
 
@@ -249,8 +357,14 @@ int idx, first, loop;
 
 	  if (lockType == MutexType)
 		mutex_unlock(mutex);
-	  else
+	  else if (lockType == TicketType)
 		ticket_unlock(ticket);
+	  else if (lockType == SystemType)
+		system_unlock(sysmutex);
+#ifdef linux
+	  else
+		mcs_unlock(mcs, qnode);
+#endif
 	}
 
 #ifdef DEBUG
@@ -262,39 +376,48 @@ int idx, first, loop;
 int main (int argc, char **argv)
 {
 double start, elapsed;
-uint64_t idx, cnt = 4;
+uint64_t idx;
 #ifdef unix
 pthread_t *threads;
 #else
 HANDLE *threads;
 #endif
 
+#ifdef _WIN32
+	InitializeCriticalSection(sysmutex);
+#endif
 	start = getCpuTime(0);
 
 	for (idx = 0; idx < 256; idx++)
 		Array[idx] = idx;
 
 	if (argc > 1)
-		cnt = atoi(argv[1]);
+		ThreadCnt = atoi(argv[1]);
 
 	if (argc > 2)
 		lockType = atoi(argv[2]);
 
 	if (lockType == MutexType)
-		fprintf(stderr, "Mutex Type\n");
+		fprintf(stderr, "Mutex Type %d bytes\n", sizeof(Mutex));
+
+	if (lockType == SystemType)
+		fprintf(stderr, "System Type %d bytes\n", sizeof(sysmutex));
 
 	if (lockType == TicketType)
-		fprintf(stderr, "Ticket Type\n");
+		fprintf(stderr, "Ticket Type %d bytes\n", sizeof(Ticket));
+
+	if (lockType == MCSType)
+		fprintf(stderr, "MCS Type %d bytes\n", sizeof(MCS));
 
 #ifdef unix
-	threads = malloc (cnt * sizeof(pthread_t));
+	threads = malloc (ThreadCnt * sizeof(pthread_t));
 #else
-	threads = GlobalAlloc (GMEM_FIXED|GMEM_ZEROINIT, cnt * sizeof(HANDLE));
+	threads = GlobalAlloc (GMEM_FIXED|GMEM_ZEROINIT, ThreadCnt * sizeof(HANDLE));
 #endif
 
-	for (idx = 0; idx < cnt; idx++) {
+	for (idx = 0; idx < ThreadCnt; idx++) {
 #ifdef unix
-	  if( pthread_create (threads + idx, NULL, testit, idx) )
+	  if( pthread_create (threads + idx, NULL, testit, (void *)idx) )
 		fprintf(stderr, "Unable to create thread, errno = %d\n", errno);
 #else
 	  threads[idx] = (HANDLE)_beginthreadex(NULL, 131072, testit, (void *)idx, 0, NULL);
@@ -304,12 +427,12 @@ HANDLE *threads;
 	// 	wait for termination
 
 #ifdef unix
-	for( idx = 0; idx < cnt; idx++ )
+	for( idx = 0; idx < ThreadCnt; idx++ )
 		pthread_join (threads[idx], NULL);
 #else
-	WaitForMultipleObjects (cnt, threads, TRUE, INFINITE);
+	WaitForMultipleObjects (ThreadCnt, threads, TRUE, INFINITE);
 
-	for( idx = 0; idx < cnt; idx++ )
+	for( idx = 0; idx < ThreadCnt; idx++ )
 		CloseHandle(threads[idx]);
 #endif
 
