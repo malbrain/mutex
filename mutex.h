@@ -21,7 +21,10 @@ typedef struct {
 } Ticket;
 
 typedef struct {
-  volatile void *next;
+  void * volatile next;
+#ifdef _WIN32
+  HANDLE wait;
+#else
 #ifdef FUTEX
   union {
 	struct {
@@ -32,6 +35,7 @@ typedef struct {
   };
 #else
   volatile char lock[1];
+#endif
 #endif
 } MCS;
 

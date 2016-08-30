@@ -10,6 +10,7 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winbase.h>
 #include <process.h>
 #else
 #include <pthread.h>
@@ -198,6 +199,50 @@ volatile int idx;
 
 	return 0;
 }
+
+void mcs_lock (MCS **lock, MCS *qnode) {
+MCS *predecessor;
+
+	qnode->next = NULL;
+
+	predecessor = _InterlockedExchangePointer(lock, qnode);
+
+	// MCS lock is idle
+
+	if (!predecessor)
+	  return;
+
+	// link qnode onto predecessor's wait chain
+
+	predecessor->next = qnode;
+
+	// wait for predecessor to signal us
+
+	WaitForSingleObject(qnode->wait, INFINITE);
+}
+
+void mcs_unlock (MCS **lock, MCS *qnode) {
+uint32_t spinCount = 0;
+MCS *next;
+
+	//	is there no next queue entry?
+
+	if (!qnode->next) {
+		if (_InterlockedCompareExchangePointer (lock, NULL, qnode) == qnode)
+			return;
+
+		//  wait for next queue entry to install itself
+
+		while (!qnode->next)
+		  lock_spin (&spinCount);
+	}
+
+	// wake up next entry in wait chain
+
+	next = (MCS *)qnode->next;
+	SetEvent(next->wait);
+}
+
 #define system_lock(mutex)	EnterCriticalSection(mutex)
 #define system_unlock(mutex) LeaveCriticalSection(mutex)
 
@@ -331,29 +376,29 @@ uint64_t threadno = (uint64_t)arg;
 int idx, first, loop;
 MCS qnode[1];
 
+#ifdef _WIN32
+	qnode->wait = CreateEvent(NULL, FALSE, FALSE, NULL);
+#endif
 	for (loop = 0; loop < 100000000/ThreadCnt; loop++) {
+#ifdef DEBUG
+	  if (!(loop % (1000000 / ThreadCnt)))
+		fprintf(stderr, "thread %lld loop %d\n", threadno, loop);
+#endif
 	  if (lockType == MutexType)
 		mutex_lock(mutex);
 	  else if (lockType == TicketType)
 		ticket_lock(ticket);
 	  else if (lockType == SystemType)
 		system_lock(sysmutex);
-#ifdef linux
-	  else
+	  else if (lockType == MCSType)
 		mcs_lock (mcs, qnode);
-#endif
 
-		first = Array[0];
+	  first = Array[0];
 
-#ifdef DEBUG
-		if (!(loop % 1000000))
-			fprintf(stderr, "thread %lld loop %d\n", threadno, loop);
-#endif
+	  for (idx = 0; idx < 255; idx++)
+		Array[idx] = Array[idx + 1];
 
-		for (idx = 0; idx < 255; idx++)
-			Array[idx] = Array[idx + 1];
-
-		Array[255] = first;
+	  Array[255] = first;
 
 	  if (lockType == MutexType)
 		mutex_unlock(mutex);
@@ -361,12 +406,13 @@ MCS qnode[1];
 		ticket_unlock(ticket);
 	  else if (lockType == SystemType)
 		system_unlock(sysmutex);
-#ifdef linux
-	  else
+	  else if (lockType == MCSType)
 		mcs_unlock(mcs, qnode);
-#endif
 	}
 
+#ifdef _WIN32
+	CloseHandle(qnode->wait);
+#endif
 #ifdef DEBUG
 	fprintf(stderr, "thread %lld exiting\n", threadno);
 #endif
@@ -398,16 +444,16 @@ HANDLE *threads;
 		lockType = atoi(argv[2]);
 
 	if (lockType == MutexType)
-		fprintf(stderr, "Mutex Type %d bytes\n", sizeof(Mutex));
+		fprintf(stderr, "Mutex Type %lld bytes\n", sizeof(Mutex));
 
 	if (lockType == SystemType)
-		fprintf(stderr, "System Type %d bytes\n", sizeof(sysmutex));
+		fprintf(stderr, "System Type %lld bytes\n", sizeof(sysmutex));
 
 	if (lockType == TicketType)
-		fprintf(stderr, "Ticket Type %d bytes\n", sizeof(Ticket));
+		fprintf(stderr, "Ticket Type %lld bytes\n", sizeof(Ticket));
 
 	if (lockType == MCSType)
-		fprintf(stderr, "MCS Type %d bytes\n", sizeof(MCS));
+		fprintf(stderr, "MCS Type %lld bytes\n", sizeof(MCS));
 
 #ifdef unix
 	threads = malloc (ThreadCnt * sizeof(pthread_t));
@@ -418,9 +464,10 @@ HANDLE *threads;
 	for (idx = 0; idx < ThreadCnt; idx++) {
 #ifdef unix
 	  if( pthread_create (threads + idx, NULL, testit, (void *)idx) )
-		fprintf(stderr, "Unable to create thread, errno = %d\n", errno);
+		fprintf(stderr, "Unable to create thread %d, errno = %d\n", idx, errno);
 #else
-	  threads[idx] = (HANDLE)_beginthreadex(NULL, 131072, testit, (void *)idx, 0, NULL);
+	  do threads[idx] = (HANDLE)_beginthreadex(NULL, 131072, testit, (void *)idx, 0, NULL);
+	  while ((int64_t)threads[idx] == -1 && (SwitchToThread(), 1));
 #endif
 	}
 
@@ -430,10 +477,10 @@ HANDLE *threads;
 	for( idx = 0; idx < ThreadCnt; idx++ )
 		pthread_join (threads[idx], NULL);
 #else
-	WaitForMultipleObjects (ThreadCnt, threads, TRUE, INFINITE);
-
-	for( idx = 0; idx < ThreadCnt; idx++ )
+	for( idx = 0; idx < ThreadCnt; idx++ ) {
+		WaitForSingleObject (threads[idx], INFINITE);
 		CloseHandle(threads[idx]);
+	}
 #endif
 
 	for( idx = 0; idx < 256; idx++)
