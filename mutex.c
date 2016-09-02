@@ -30,6 +30,12 @@ int sys_futex(void *addr1, int op, int val1, struct timespec *timeout, void *add
 
 #endif
 
+#ifdef FUTEX
+uint64_t FutexCnt[1];
+#endif
+
+int NanoCnt[1];
+
 #ifdef unix
 #define pause() asm volatile("pause\n": : : "memory")
 
@@ -39,6 +45,7 @@ struct timespec ts[1];
 	ts->tv_sec = 0;
 	ts->tv_nsec = cnt;
 	nanosleep(ts, NULL);
+	__sync_fetch_and_add(NanoCnt, 1);
 }
 
 int lock_spin (int *cnt) {
@@ -52,8 +59,6 @@ volatile int idx;
 	if (*cnt < 1024 )
 	  for (idx = 0; idx < *cnt; idx++)
 		pause();
-	else if (*cnt < 8192)
-		sched_yield();
 	else
 		return 1;
 
@@ -94,6 +99,7 @@ MCS *predecessor;
 #else
 		qnode->futex = 1;
 		sys_futex ((void *)qnode->bits, FUTEX_WAIT, 0x10001, NULL, NULL, 0);
+  		__sync_fetch_and_add(FutexCnt, 1);
 #endif
 	  }
 	}
@@ -112,7 +118,8 @@ MCS *next;
 		//  wait for next queue entry to install itself
 
 		while (!qnode->next)
-		  lock_spin (&spinCount);
+		  if (lock_spin (&spinCount))
+		    lock_sleep (spinCount);
 	}
 
 	// turn off lock bit and wake up next queue entry
@@ -128,6 +135,7 @@ MCS *next;
 
 void mutex_lock(Mutex* mutex) {
 uint32_t spinCount = 0;
+uint32_t prev;
 
   while (__sync_fetch_and_or(mutex->lock, 1) & 1)
 	while (*mutex->lock)
@@ -135,8 +143,11 @@ uint32_t spinCount = 0;
 #ifndef FUTEX
 		lock_sleep(spinCount);
 #else
-		mutex->futex = 1;
-		sys_futex ((void *)mutex->bits, FUTEX_WAIT, 0x10001, NULL, NULL, 0);
+		// increment futex waiting
+
+  		__sync_fetch_and_add(FutexCnt, 1);
+		prev = __sync_add_and_fetch(mutex->futex, 1) << 16 | 1;
+		sys_futex ((void *)mutex->bits, FUTEX_WAIT, prev, NULL, NULL, 0);
 #endif
 	  }
 }
@@ -145,10 +156,69 @@ void mutex_unlock(Mutex* mutex) {
 	asm volatile ("" ::: "memory");
 	*mutex->lock = 0;
 #ifdef FUTEX
-	if (mutex->futex) {
- 		sys_futex( (void *)mutex->lock, FUTEX_WAKE, 1, NULL, NULL, 0);
-		mutex->futex = 0;
+	if (*mutex->futex) {
+		__sync_fetch_and_sub(mutex->futex, 1);
+ 		sys_futex( (void *)mutex->bits, FUTEX_WAKE, 1, NULL, NULL, 0);
 	}
+#endif
+}
+
+void mutex_lock2(Mutex2 *latch)
+{
+uint32_t idx, waited = 0;
+uint32_t spinCount = 0;
+Mutex2 prev[1];
+
+  while( 1 ) {
+   spinCount = 0;
+   do {
+#ifdef FUTEX
+	*prev->value = __sync_fetch_and_or (latch->value, 1);
+#else
+	*prev->lock = __sync_fetch_and_or (latch->lock, 1);
+#endif
+
+	//  did we take mutex?
+
+#ifdef FUTEX
+	if( !*prev->xcl ) {
+	  if( waited )
+		__sync_fetch_and_sub (latch->waiters, 1);
+	  return;
+	}
+#else
+	if( !*prev->lock )
+	  return;
+#endif
+   } while (lock_spin (&spinCount));
+
+  if( !waited ) {
+#ifdef FUTEX
+	__sync_fetch_and_add (latch->waiters, 1);
+	*prev->waiters += 1;
+#endif
+	waited++;
+  }
+
+#ifdef FUTEX
+  __sync_fetch_and_add(FutexCnt, 1);
+  sys_futex ((void *)latch->value, FUTEX_WAIT, *prev->value, NULL, NULL, 0);
+#else
+  lock_sleep (spinCount);
+#endif
+ }
+}
+
+void mutex_unlock2(Mutex2 *latch)
+{
+#ifdef FUTEX
+	//	waiters?
+
+	if (__sync_fetch_and_and (latch->value, 0xffff0000))
+		sys_futex( (void *)latch->value, FUTEX_WAKE, 1, NULL, NULL, 0 );
+#else
+	asm volatile ("" ::: "memory");
+	*latch->lock = 0;
 #endif
 }
 
@@ -159,43 +229,50 @@ uint16_t ours;
 	ours = __sync_fetch_and_add(ticket->next, 1);
 
 	while (ours != ticket->serving[0])
-	  lock_spin (&spinCount);
+	  if (lock_spin (&spinCount))
+		lock_sleep (spinCount);
 }
 
 void ticket_unlock(Ticket* ticket) {
+	asm volatile ("" ::: "memory");
 	ticket->serving[0]++;
 }
 
 #else
 
-// Replacement for nanosleep on Windows.
+void lock_sleep (int ticks) {
+LARGE_INTEGER start[1], freq[1], next[1];
+int idx, interval;
+double conv;
 
-void nanosleep (const uint32_t ns, HANDLE *timer)
-{
-	LARGE_INTEGER sleepTime;
+	QueryPerformanceFrequency(freq);
+	QueryPerformanceCounter(next);
+	conv = (double)freq->QuadPart / 1000000000; 
 
-	sleepTime.QuadPart = ns / 100;
+	for (idx = 0; idx < ticks; idx += interval) {
+		*start = *next;
+		Sleep(0);
+		QueryPerformanceCounter(next);
+		interval = (next->QuadPart - start->QuadPart) / conv;
+	}
 
-	if (!*timer)
-		*timer = CreateWaitableTimer (NULL, TRUE, NULL);
-
-	SetWaitableTimer (*timer, &sleepTime, 0, NULL, NULL, 0);
-	WaitForSingleObject (*timer, INFINITE);
+	_InterlockedIncrement(NanoCnt);
 }
 
 int lock_spin (uint32_t *cnt) {
 volatile int idx;
 
-	if (*cnt < 8192)
-	  *cnt += *cnt / 8;
+	if (!*cnt)
+	  *cnt = 8;
+
+	if (*cnt < 1024 * 1024)
+	  *cnt += *cnt / 4;
 
 	if (*cnt < 1024 )
 	  for (idx = 0; idx < *cnt; idx++)
 		YieldProcessor();
-	else if (*cnt < 8192)
-		SwitchToThread();
-	else
-		return 1;
+ 	else
+ 		return 1;
 
 	return 0;
 }
@@ -205,7 +282,11 @@ MCS *predecessor;
 
 	qnode->next = NULL;
 
-	predecessor = _InterlockedExchangePointer(lock, qnode);
+#	ifdef _WIN64
+		predecessor = _InterlockedExchangePointer(lock, qnode);
+#	else
+		predecessor = (MCS *)_InterlockedExchange(lock, qnode);
+#	endif
 
 	// MCS lock is idle
 
@@ -228,8 +309,13 @@ MCS *next;
 	//	is there no next queue entry?
 
 	if (!qnode->next) {
+#	  ifdef _WIN64
 		if (_InterlockedCompareExchangePointer (lock, NULL, qnode) == qnode)
 			return;
+#	  else
+		if ((MCS *)_InterlockedCompareExchange (lock, NULL, qnode) == qnode)
+			return;
+#	  endif
 
 		//  wait for next queue entry to install itself
 
@@ -248,34 +334,39 @@ MCS *next;
 
 void mutex_lock(Mutex* mutex) {
 uint32_t spinCount = 0;
-HANDLE timer = NULL;
 
   while (_InterlockedOr8(mutex->lock, 1) & 1)
 	while (*mutex->lock & 1)
 	  if (lock_spin(&spinCount))
-		nanosleep(spinCount, &timer);
-
-  if (timer)
-	CloseHandle(timer);
+		lock_sleep(spinCount);
 }
 
 void mutex_unlock(Mutex* mutex) {
 	*mutex->lock = 0;
 }
 
+void mutex_lock2(Mutex2* mutex) {
+uint32_t spinCount = 0;
+
+  while (_InterlockedOr8(mutex->lock, 1) & 1)
+	while (*mutex->lock & 1)
+	  if (lock_spin(&spinCount))
+		lock_sleep(spinCount);
+}
+
+void mutex_unlock2(Mutex2* mutex) {
+	*mutex->lock = 0;
+}
+
 void ticket_lock(Ticket* ticket) {
 uint32_t spinCount = 0;
-HANDLE timer = NULL;
 uint16_t ours;
 
 	ours = (uint16_t)_InterlockedIncrement16(ticket->next) - 1;
 
 	while( ours != ticket->serving[0] )
 	  if (lock_spin(&spinCount))
-		nanosleep(spinCount, &timer);
-
-	if (timer)
-		CloseHandle(timer);
+		lock_sleep(spinCount);
 }
 
 void ticket_unlock(Ticket* ticket) {
@@ -289,10 +380,12 @@ pthread_mutex_t sysmutex[1] = {PTHREAD_MUTEX_INITIALIZER};
 unsigned char Array[256] __attribute__((aligned(64)));
 Ticket ticket[1] __attribute__((aligned(64)));
 Mutex mutex[1] __attribute__((aligned(64)));
+Mutex2 mutex2[1] __attribute__((aligned(64)));
 #else
 __declspec(align(64)) unsigned char Array[256];
 __declspec(align(64)) Ticket ticket[1];
 __declspec(align(64)) Mutex mutex[1];
+__declspec(align(64)) Mutex2 mutex2[1];
 CRITICAL_SECTION sysmutex[1];
 #endif
 
@@ -302,6 +395,7 @@ MCS *mcs[1];
 enum {
 	SystemType,
 	MutexType,
+	Mutex2Type,
 	TicketType,
 	MCSType
 } lockType;
@@ -386,6 +480,8 @@ MCS qnode[1];
 #endif
 	  if (lockType == MutexType)
 		mutex_lock(mutex);
+	  else if (lockType == Mutex2Type)
+		mutex_lock2(mutex2);
 	  else if (lockType == TicketType)
 		ticket_lock(ticket);
 	  else if (lockType == SystemType)
@@ -402,6 +498,8 @@ MCS qnode[1];
 
 	  if (lockType == MutexType)
 		mutex_unlock(mutex);
+	  else if (lockType == Mutex2Type)
+		mutex_unlock2(mutex2);
 	  else if (lockType == TicketType)
 		ticket_unlock(ticket);
 	  else if (lockType == SystemType)
@@ -445,6 +543,9 @@ HANDLE *threads;
 
 	if (lockType == MutexType)
 		fprintf(stderr, "Mutex Type %lld bytes\n", sizeof(Mutex));
+
+	if (lockType == Mutex2Type)
+		fprintf(stderr, "Mutex2 Type %lld bytes\n", sizeof(Mutex2));
 
 	if (lockType == SystemType)
 		fprintf(stderr, "System Type %lld bytes\n", sizeof(sysmutex));
@@ -493,5 +594,9 @@ HANDLE *threads;
 	fprintf(stderr, " user %.0fns\n", elapsed * 10);
 	elapsed = getCpuTime(2);
 	fprintf(stderr, " sys  %.0fns\n", elapsed * 10);
+#ifdef FUTEX
+	fprintf(stderr, " futex waits: %lld\n", FutexCnt[0]);
+#endif
+	fprintf(stderr, " nanosleeps %d\n", NanoCnt[0]);
 }
 #endif

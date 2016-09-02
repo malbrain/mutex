@@ -3,17 +3,31 @@
 
 #include <stdint.h>
 
-typedef union {
+typedef volatile union {
 #ifdef FUTEX
   struct {
-	volatile uint16_t lock[1];
-	uint16_t futex;
+	uint16_t lock[1];
+	uint16_t futex[1];
   };
   uint32_t bits[1];
 #else
-  volatile char lock[1];
+  char lock[1];
 #endif
 } Mutex;
+
+//	another mutex implementation
+
+typedef volatile union {
+#ifdef FUTEX
+  struct {
+	uint16_t lock[1];
+	uint16_t waiters[1];
+  };
+  uint32_t value[1];
+#else
+  char lock[1];
+#endif
+} Mutex2;
 
 typedef struct {
 	volatile uint16_t serving[1];
