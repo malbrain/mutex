@@ -20,20 +20,6 @@ The Mutex structure is defined as:
     #endif
     } Mutex;
   
-The Mutex2 structure is defined as:
-
-    typedef volatile union {
-    #ifdef FUTEX
-      struct {
-        uint16_t xcl[1];
-        uint16_t waiters;
-      };
-      uint32_t value[1];
-    #else
-      char lock[1];
-    #endif
-    } Mutex2;
-  
 The ticket latch uses two 16 bit shorts and is obtained and released by:
 
     ticket_lock(Ticket *ticket);
@@ -60,11 +46,10 @@ Define STANDLONE during compilation to perform basic benchmarks on your system:
 where <mutex type> is:
     0: System Type
     1: Mutex Type
-    2: Mutex2 Type
-    3: Ticket Type	(Non Scalable)
-    4: MCS type		(Non Scalable)
+    2: Ticket Type	(Non Scalable)
+    3: MCS type		(Non Scalable)
 
-Sample linux output (non-FUTEX):
+Sample linux 64 bit output (non-FUTEX):
 
     Mutex Type 1 bytes
 
@@ -91,32 +76,6 @@ Sample linux output (non-FUTEX):
      user 131ns
      sys  9ns
      nanosleeps 921295
-
-    Mutex2 Type 1 bytes
-
-    [root@test7x64 xlink]# ./mutex 2 2
-     real 23ns
-     user 26ns
-     sys  0ns
-     nanosleeps 35298
-
-    [root@test7x64 xlink]# ./mutex 20 2
-     real 24ns
-     user 36ns
-     sys  1ns
-     nanosleeps 597483
-
-    [root@test7x64 xlink]# ./mutex 200 2
-     real 38ns
-     user 60ns
-     sys  72ns
-     nanosleeps 6795226
-
-    [root@test7x64 xlink]# ./mutex 2000 2
-     real 39ns
-     user 61ns
-     sys  91ns
-     nanosleeps 6978030
 
 Sample linux output (FUTEX):
 
@@ -151,4 +110,4 @@ Sample linux output (FUTEX):
      futex waits: 752642
      nanosleeps 0
 
-
+Please address any questions or concerns to the program author: Karl Malbrain, malbrain@cal.berkeley.edu.

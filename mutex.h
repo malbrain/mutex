@@ -15,20 +15,6 @@ typedef volatile union {
 #endif
 } Mutex;
 
-//	another mutex implementation
-
-typedef volatile union {
-#ifdef FUTEX
-  struct {
-	uint16_t lock[1];
-	uint16_t waiters[1];
-  };
-  uint32_t value[1];
-#else
-  char lock[1];
-#endif
-} Mutex2;
-
 typedef struct {
 	volatile uint16_t serving[1];
 	volatile uint16_t next[1];

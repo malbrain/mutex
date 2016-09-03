@@ -163,65 +163,6 @@ void mutex_unlock(Mutex* mutex) {
 #endif
 }
 
-void mutex_lock2(Mutex2 *latch)
-{
-uint32_t idx, waited = 0;
-uint32_t spinCount = 0;
-Mutex2 prev[1];
-
-  while( 1 ) {
-   spinCount = 0;
-   do {
-#ifdef FUTEX
-	*prev->value = __sync_fetch_and_or (latch->value, 1);
-#else
-	*prev->lock = __sync_fetch_and_or (latch->lock, 1);
-#endif
-
-	//  did we take mutex?
-
-#ifdef FUTEX
-	if( !*prev->xcl ) {
-	  if( waited )
-		__sync_fetch_and_sub (latch->waiters, 1);
-	  return;
-	}
-#else
-	if( !*prev->lock )
-	  return;
-#endif
-   } while (lock_spin (&spinCount));
-
-  if( !waited ) {
-#ifdef FUTEX
-	__sync_fetch_and_add (latch->waiters, 1);
-	*prev->waiters += 1;
-#endif
-	waited++;
-  }
-
-#ifdef FUTEX
-  __sync_fetch_and_add(FutexCnt, 1);
-  sys_futex ((void *)latch->value, FUTEX_WAIT, *prev->value, NULL, NULL, 0);
-#else
-  lock_sleep (spinCount);
-#endif
- }
-}
-
-void mutex_unlock2(Mutex2 *latch)
-{
-#ifdef FUTEX
-	//	waiters?
-
-	if (__sync_fetch_and_and (latch->value, 0xffff0000))
-		sys_futex( (void *)latch->value, FUTEX_WAKE, 1, NULL, NULL, 0 );
-#else
-	asm volatile ("" ::: "memory");
-	*latch->lock = 0;
-#endif
-}
-
 void ticket_lock(Ticket* ticket) {
 uint32_t spinCount = 0;
 uint16_t ours;
@@ -345,18 +286,6 @@ void mutex_unlock(Mutex* mutex) {
 	*mutex->lock = 0;
 }
 
-void mutex_lock2(Mutex2* mutex) {
-uint32_t spinCount = 0;
-
-  while (_InterlockedOr8(mutex->lock, 1) & 1)
-	while (*mutex->lock & 1)
-	  if (lock_spin(&spinCount))
-		lock_sleep(spinCount);
-}
-
-void mutex_unlock2(Mutex2* mutex) {
-	*mutex->lock = 0;
-}
 
 void ticket_lock(Ticket* ticket) {
 uint32_t spinCount = 0;
@@ -380,12 +309,10 @@ pthread_mutex_t sysmutex[1] = {PTHREAD_MUTEX_INITIALIZER};
 unsigned char Array[256] __attribute__((aligned(64)));
 Ticket ticket[1] __attribute__((aligned(64)));
 Mutex mutex[1] __attribute__((aligned(64)));
-Mutex2 mutex2[1] __attribute__((aligned(64)));
 #else
 __declspec(align(64)) unsigned char Array[256];
 __declspec(align(64)) Ticket ticket[1];
 __declspec(align(64)) Mutex mutex[1];
-__declspec(align(64)) Mutex2 mutex2[1];
 CRITICAL_SECTION sysmutex[1];
 #endif
 
@@ -395,7 +322,6 @@ MCS *mcs[1];
 enum {
 	SystemType,
 	MutexType,
-	Mutex2Type,
 	TicketType,
 	MCSType
 } lockType;
@@ -480,8 +406,6 @@ MCS qnode[1];
 #endif
 	  if (lockType == MutexType)
 		mutex_lock(mutex);
-	  else if (lockType == Mutex2Type)
-		mutex_lock2(mutex2);
 	  else if (lockType == TicketType)
 		ticket_lock(ticket);
 	  else if (lockType == SystemType)
@@ -498,8 +422,6 @@ MCS qnode[1];
 
 	  if (lockType == MutexType)
 		mutex_unlock(mutex);
-	  else if (lockType == Mutex2Type)
-		mutex_unlock2(mutex2);
 	  else if (lockType == TicketType)
 		ticket_unlock(ticket);
 	  else if (lockType == SystemType)
@@ -543,9 +465,6 @@ HANDLE *threads;
 
 	if (lockType == MutexType)
 		fprintf(stderr, "Mutex Type %lld bytes\n", sizeof(Mutex));
-
-	if (lockType == Mutex2Type)
-		fprintf(stderr, "Mutex2 Type %lld bytes\n", sizeof(Mutex2));
 
 	if (lockType == SystemType)
 		fprintf(stderr, "System Type %lld bytes\n", sizeof(sysmutex));
