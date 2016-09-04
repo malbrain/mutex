@@ -3,15 +3,17 @@
 
 #include <stdint.h>
 
-typedef volatile union {
+typedef enum {
+	FREE = 0,
+	LOCKED,
+	CONTESTED
+} MutexState;
+
+typedef volatile struct {
 #ifdef FUTEX
-  struct {
-	uint16_t lock[1];
-	uint16_t futex[1];
-  };
-  uint32_t bits[1];
+	MutexState state[1];
 #else
-  char lock[1];
+	char lock[1];
 #endif
 } Mutex;
 

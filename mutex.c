@@ -133,33 +133,38 @@ MCS *next;
 #endif
 }
 
-void mutex_lock(Mutex* mutex) {
+void mutex_lock(Mutex *mutex) {
+MutexState c, nxt =  LOCKED;
 uint32_t spinCount = 0;
-uint32_t prev;
 
-  while (__sync_fetch_and_or(mutex->lock, 1) & 1)
-	while (*mutex->lock)
-	  if (lock_spin (&spinCount)) {
+  while ((c = __sync_val_compare_and_swap(mutex->state, FREE, nxt)) != FREE)
+	while ((c = *mutex->state))
+	  if (lock_spin (&spinCount))
 #ifndef FUTEX
-		lock_sleep(spinCount);
+		lock_sleep (spinCount);
 #else
-		// increment futex waiting
+		{
+		  if (c == LOCKED)
+    		if (__sync_val_compare_and_swap(mutex->state, LOCKED, CONTESTED) == FREE)
+			  continue;
 
-  		__sync_fetch_and_add(FutexCnt, 1);
-		prev = __sync_add_and_fetch(mutex->futex, 1) << 16 | 1;
-		sys_futex ((void *)mutex->bits, FUTEX_WAIT, prev, NULL, NULL, 0);
+  		  __sync_fetch_and_add(FutexCnt, 1);
+		  sys_futex((void *)mutex->state, FUTEX_WAIT, CONTESTED, NULL, NULL, 0);
+		  nxt = CONTESTED;
+		}
 #endif
-	  }
 }
 
 void mutex_unlock(Mutex* mutex) {
 	asm volatile ("" ::: "memory");
-	*mutex->lock = 0;
+
 #ifdef FUTEX
-	if (*mutex->futex) {
-		__sync_fetch_and_sub(mutex->futex, 1);
- 		sys_futex( (void *)mutex->bits, FUTEX_WAKE, 1, NULL, NULL, 0);
+	if (__sync_fetch_and_sub(mutex->state, 1) == CONTESTED)  {
+   		*mutex->state = FREE;
+ 		sys_futex( (void *)mutex->state, FUTEX_WAKE, 1, NULL, NULL, 0);
 	}
+#else
+	*mutex->state = free;
 #endif
 }
 
@@ -283,6 +288,7 @@ uint32_t spinCount = 0;
 }
 
 void mutex_unlock(Mutex* mutex) {
+	asm volatile ("" ::: "memory");
 	*mutex->lock = 0;
 }
 
@@ -457,23 +463,19 @@ HANDLE *threads;
 	for (idx = 0; idx < 256; idx++)
 		Array[idx] = idx;
 
+	if (argc == 1) {
+		fprintf(stderr, "Usage: %s #threads #type\n", argv[0]);
+		fprintf(stderr, "0: System Type %lld bytes\n", sizeof(sysmutex));
+		fprintf(stderr, "1: Mutex Type %lld bytes\n", sizeof(Mutex));
+		fprintf(stderr, "2: Ticket Type %lld bytes\n", sizeof(Ticket));
+		fprintf(stderr, "3: MCS Type %lld bytes\n", sizeof(MCS));
+	}
+
 	if (argc > 1)
 		ThreadCnt = atoi(argv[1]);
 
 	if (argc > 2)
 		lockType = atoi(argv[2]);
-
-	if (lockType == MutexType)
-		fprintf(stderr, "Mutex Type %lld bytes\n", sizeof(Mutex));
-
-	if (lockType == SystemType)
-		fprintf(stderr, "System Type %lld bytes\n", sizeof(sysmutex));
-
-	if (lockType == TicketType)
-		fprintf(stderr, "Ticket Type %lld bytes\n", sizeof(Ticket));
-
-	if (lockType == MCSType)
-		fprintf(stderr, "MCS Type %lld bytes\n", sizeof(MCS));
 
 #ifdef unix
 	threads = malloc (ThreadCnt * sizeof(pthread_t));

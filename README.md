@@ -43,15 +43,14 @@ Define STANDLONE during compilation to perform basic benchmarks on your system:
 
     ./mutex <# threads> <mutex type>
 
-where <mutex type> is:
-    0: System Type
-    1: Mutex Type
-    2: Ticket Type	(Non Scalable)
-    3: MCS type		(Non Scalable)
+    Usage: ./mutex #threads #type
+    0: System Type 40 bytes
+    1: Mutex Type 4 bytes
+    2: Ticket Type 4 bytes
+    3: MCS Type 16 bytes
 
 Sample linux 64 bit output (non-FUTEX):
 
-    Mutex Type 1 bytes
 
     [root@test7x64 xlink]# ./mutex 2 1
      real 42ns
@@ -79,35 +78,34 @@ Sample linux 64 bit output (non-FUTEX):
 
 Sample linux output (FUTEX):
 
-    Mutex Type 4 bytes
-
     [root@test7x64 xlink]# cc -o mutex -g -O3 -D STANDALONE -D FUTEX mutex.c -lpthread
+
     [root@test7x64 xlink]# ./mutex 2 1
-     real 49ns
-     user 99ns
+     real 64ns
+     user 128ns
      sys  0ns
-     futex waits: 72
+     futex waits: 23
      nanosleeps 0
 
     [root@test7x64 xlink]# ./mutex 20 1
-     real 113ns
-     user 203ns
-     sys  249ns
-     futex waits: 645817
+     real 121ns
+     user 477ns
+     sys  0ns
+     futex waits: 27036
      nanosleeps 0
 
     [root@test7x64 xlink]# ./mutex 200 1
-     real 117ns
-     user 208ns
-     sys  261ns
-     futex waits: 663790
+     real 119ns
+     user 473ns
+     sys  1ns
+     futex waits: 52872
      nanosleeps 0
 
     [root@test7x64 xlink]# ./mutex 2000 1
-     real 153ns
-     user 217ns
-     sys  396ns
-     futex waits: 752642
+     real 121ns
+     user 480ns
+     sys  2ns
+     futex waits: 60073
      nanosleeps 0
 
 Please address any questions or concerns to the program author: Karl Malbrain, malbrain@cal.berkeley.edu.
