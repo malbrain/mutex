@@ -288,7 +288,6 @@ uint32_t spinCount = 0;
 }
 
 void mutex_unlock(Mutex* mutex) {
-	asm volatile ("" ::: "memory");
 	*mutex->lock = 0;
 }
 
