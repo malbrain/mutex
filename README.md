@@ -81,31 +81,31 @@ Sample linux output (FUTEX):
     [root@test7x64 xlink]# cc -o mutex -g -O3 -D STANDALONE -D FUTEX mutex.c -lpthread
 
     [root@test7x64 xlink]# ./mutex 2 1
-     real 64ns
-     user 128ns
+     real 66ns
+     user 132ns
      sys  0ns
-     futex waits: 23
+     futex waits: 3
      nanosleeps 0
 
     [root@test7x64 xlink]# ./mutex 20 1
-     real 121ns
-     user 477ns
+     real 120ns
+     user 475ns
      sys  0ns
-     futex waits: 27036
+     futex waits: 22728
      nanosleeps 0
 
     [root@test7x64 xlink]# ./mutex 200 1
      real 119ns
-     user 473ns
+     user 471ns
      sys  1ns
-     futex waits: 52872
+     futex waits: 38041
      nanosleeps 0
 
     [root@test7x64 xlink]# ./mutex 2000 1
      real 121ns
-     user 480ns
+     user 478ns
      sys  2ns
-     futex waits: 60073
+     futex waits: 49069
      nanosleeps 0
 
 Please address any questions or concerns to the program author: Karl Malbrain, malbrain@cal.berkeley.edu.

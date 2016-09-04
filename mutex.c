@@ -137,8 +137,8 @@ void mutex_lock(Mutex *mutex) {
 MutexState c, nxt =  LOCKED;
 uint32_t spinCount = 0;
 
-  while ((c = __sync_val_compare_and_swap(mutex->state, FREE, nxt)) != FREE)
-	while ((c = *mutex->state))
+  while (__sync_val_compare_and_swap(mutex->state, FREE, nxt) != FREE)
+	while ((c = *mutex->state) != FREE)
 	  if (lock_spin (&spinCount))
 #ifndef FUTEX
 		lock_sleep (spinCount);
@@ -146,11 +146,12 @@ uint32_t spinCount = 0;
 		{
 		  if (c == LOCKED)
     		if (__sync_val_compare_and_swap(mutex->state, LOCKED, CONTESTED) == FREE)
-			  continue;
+			  break;
 
   		  __sync_fetch_and_add(FutexCnt, 1);
 		  sys_futex((void *)mutex->state, FUTEX_WAIT, CONTESTED, NULL, NULL, 0);
 		  nxt = CONTESTED;
+		  break;
 		}
 #endif
 }
