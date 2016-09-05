@@ -8,18 +8,20 @@ The mutex latch uses one byte for the latch and is obtained and released by:
 
 The Mutex structure is defined as:
 
-    typedef volatile union {
+    typedef enum {
+    	FREE = 0,
+    	LOCKED,
+    	CONTESTED
+    } MutexState;
+
+    typedef volatile struct {
     #ifdef FUTEX
-      struct {
-        volatile uint16_t lock[1];
-        uint16_t futex;
-      };
-      uint32_t bits[1];
+    	MutexState state[1];
     #else
-      char lock[1];
+    	char lock[1];
     #endif
     } Mutex;
-  
+
 The ticket latch uses two 16 bit shorts and is obtained and released by:
 
     ticket_lock(Ticket *ticket);
