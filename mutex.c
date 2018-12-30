@@ -200,14 +200,14 @@ double conv;
 		*start = *next;
 		Sleep(0);
 		QueryPerformanceCounter(next);
-		interval = (next->QuadPart - start->QuadPart) / conv;
+		interval = (int)((next->QuadPart - start->QuadPart) / conv);
 	}
 
 	_InterlockedIncrement(NanoCnt);
 }
 
 int lock_spin (uint32_t *cnt) {
-volatile int idx;
+volatile uint32_t idx;
 
 	if (!*cnt)
 	  *cnt = 8;
@@ -315,22 +315,34 @@ pthread_mutex_t sysmutex[1] = {PTHREAD_MUTEX_INITIALIZER};
 unsigned char Array[256] __attribute__((aligned(64)));
 Ticket ticket[1] __attribute__((aligned(64)));
 Mutex mutex[1] __attribute__((aligned(64)));
+uint64_t FAA64[1]  __attribute__((aligned(64)));
+uint32_t FAA32[1] __attribute__((aligned(64)));
+uint16_t FAA16[1] __attribute__((aligned(64)));
+
 #else
 __declspec(align(64)) unsigned char Array[256];
 __declspec(align(64)) Ticket ticket[1];
 __declspec(align(64)) Mutex mutex[1];
+
+__declspec(align(64)) uint64_t FAA64[1];
+__declspec(align(64)) uint32_t FAA32[1];
+__declspec(align(64)) uint16_t FAA16[1];
+
 CRITICAL_SECTION sysmutex[1];
 #endif
 
 int ThreadCnt = 4;
 MCS *mcs[1];
 
-enum {
+typedef enum {
 	SystemType,
 	MutexType,
 	TicketType,
-	MCSType
-} lockType;
+	MCSType,
+	FAA64Type,
+	FAA32Type,
+	FAA16Type
+} LockType;
 
 #ifndef unix
 double getCpuTime(int type)
@@ -393,31 +405,56 @@ struct timeval tv[1];
 }
 #endif
 
+typedef struct {
+	LockType type;
+	int idx;
+} Param;
+
 #ifdef unix
 void *testit (void *arg) {
 #else
 UINT __stdcall testit (void *arg) {
 #endif
-uint64_t threadno = (uint64_t)arg;
+Param *param = (Param *)arg;
+uint64_t threadno = param->idx;
+LockType type = param->type;
 int idx, first, loop;
 MCS qnode[1];
 
 #ifdef _WIN32
+#define faa_time(BITS, FCN) _InterlockedIncrement##FCN(FAA##BITS)
+
+
 	qnode->wait = CreateEvent(NULL, FALSE, FALSE, NULL);
+#else
+#define faa_time(BITS,FCN) __sync_fetch_and_add(FAA##BITS, 1ULL) 
 #endif
-	for (loop = 0; loop < 100000000/ThreadCnt; loop++) {
 #ifdef DEBUG
+fprintf(stderr, "thread %lld type %d\n", threadno, type);
+#endif
+
+  for (loop = 0; loop < 100000000/ThreadCnt; loop++) {
+#ifdef DEBUG2
 	  if (!(loop % (1000000 / ThreadCnt)))
 		fprintf(stderr, "thread %lld loop %d\n", threadno, loop);
 #endif
-	  if (lockType == MutexType)
+	  if (type == MutexType)
 		mutex_lock(mutex);
-	  else if (lockType == TicketType)
+	  else if (type == TicketType)
 		ticket_lock(ticket);
-	  else if (lockType == SystemType)
+	  else if (type == SystemType)
 		system_lock(sysmutex);
-	  else if (lockType == MCSType)
-		mcs_lock (mcs, qnode);
+	  else if (type == MCSType)
+		  mcs_lock(mcs, qnode);
+	  else if (type == FAA64Type)
+		  faa_time(64,64);
+	  else if (type == FAA32Type)
+		  faa_time(32);
+	  else if (type == FAA16Type)
+		  faa_time(16,16);
+
+	  if (type > MCSType)
+		  continue;
 
 	  first = Array[0];
 
@@ -426,13 +463,13 @@ MCS qnode[1];
 
 	  Array[255] = first;
 
-	  if (lockType == MutexType)
+	  if (type == MutexType)
 		mutex_unlock(mutex);
-	  else if (lockType == TicketType)
+	  else if (type == TicketType)
 		ticket_unlock(ticket);
-	  else if (lockType == SystemType)
+	  else if (type == SystemType)
 		system_unlock(sysmutex);
-	  else if (lockType == MCSType)
+	  else if (type == MCSType)
 		mcs_unlock(mcs, qnode);
 	}
 
@@ -449,6 +486,7 @@ int main (int argc, char **argv)
 {
 double start, elapsed;
 uint64_t idx;
+LockType type = 0;
 #ifdef unix
 pthread_t *threads;
 #else
@@ -464,18 +502,18 @@ HANDLE *threads;
 		Array[idx] = idx;
 
 	if (argc == 1) {
-		fprintf(stderr, "Usage: %s #threads #type\n", argv[0]);
+		fprintf(stderr, "Usage: %s #threads #type ...\n", argv[0]);
 		fprintf(stderr, "0: System Type %lld bytes\n", sizeof(sysmutex));
 		fprintf(stderr, "1: Mutex Type %lld bytes\n", sizeof(Mutex));
 		fprintf(stderr, "2: Ticket Type %lld bytes\n", sizeof(Ticket));
 		fprintf(stderr, "3: MCS Type %lld bytes\n", sizeof(MCS));
+		fprintf(stderr, "4: FAA64 type %lld bytes\n", sizeof(FAA64));
+		fprintf(stderr, "5: FAA32 type %lld bytes\n", sizeof(FAA32));
+		fprintf(stderr, "6: FAA16 type %lld bytes\n", sizeof(FAA16));
 	}
 
 	if (argc > 1)
 		ThreadCnt = atoi(argv[1]);
-
-	if (argc > 2)
-		lockType = atoi(argv[2]);
 
 #ifdef unix
 	threads = malloc (ThreadCnt * sizeof(pthread_t));
@@ -484,11 +522,18 @@ HANDLE *threads;
 #endif
 
 	for (idx = 0; idx < ThreadCnt; idx++) {
+	  Param *param = calloc(0, sizeof(Param));
+
+	  if (idx < argc - 2)
+		type = atoi(argv[idx + 2]);
+
+	  param->type = type;
+	  param->idx = idx;
 #ifdef unix
-	  if( pthread_create (threads + idx, NULL, testit, (void *)idx) )
+	  if( pthread_create (threads + idx, NULL, testit, (void *)param) )
 		fprintf(stderr, "Unable to create thread %d, errno = %d\n", idx, errno);
 #else
-	  do threads[idx] = (HANDLE)_beginthreadex(NULL, 131072, testit, (void *)idx, 0, NULL);
+	  do threads[idx] = (HANDLE)_beginthreadex(NULL, 131072, testit, (void *)param, 0, NULL);
 	  while ((int64_t)threads[idx] == -1 && (SwitchToThread(), 1));
 #endif
 	}
