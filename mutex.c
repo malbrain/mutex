@@ -165,7 +165,7 @@ void mutex_unlock(Mutex* mutex) {
  		sys_futex( (void *)mutex->state, FUTEX_WAKE, 1, NULL, NULL, 0);
 	}
 #else
-	*mutex->state = free;
+	*mutex->state = FREE;
 #endif
 }
 
@@ -449,7 +449,7 @@ fprintf(stderr, "thread %lld type %d\n", threadno, type);
 	  else if (type == FAA64Type)
 		  faa_time(64,64);
 	  else if (type == FAA32Type)
-		  faa_time(32);
+		  faa_time(32,);
 	  else if (type == FAA16Type)
 		  faa_time(16,16);
 
@@ -485,8 +485,8 @@ fprintf(stderr, "thread %lld type %d\n", threadno, type);
 int main (int argc, char **argv)
 {
 double start, elapsed;
-uint64_t idx;
 LockType type = 0;
+int idx;
 #ifdef unix
 pthread_t *threads;
 #else
@@ -503,13 +503,13 @@ HANDLE *threads;
 
 	if (argc == 1) {
 		fprintf(stderr, "Usage: %s #threads #type ...\n", argv[0]);
-		fprintf(stderr, "0: System Type %lld bytes\n", sizeof(sysmutex));
-		fprintf(stderr, "1: Mutex Type %lld bytes\n", sizeof(Mutex));
-		fprintf(stderr, "2: Ticket Type %lld bytes\n", sizeof(Ticket));
-		fprintf(stderr, "3: MCS Type %lld bytes\n", sizeof(MCS));
-		fprintf(stderr, "4: FAA64 type %lld bytes\n", sizeof(FAA64));
-		fprintf(stderr, "5: FAA32 type %lld bytes\n", sizeof(FAA32));
-		fprintf(stderr, "6: FAA16 type %lld bytes\n", sizeof(FAA16));
+		fprintf(stderr, "0: System Type %zu bytes\n", sizeof(sysmutex));
+		fprintf(stderr, "1: Mutex Type %zu bytes\n", sizeof(Mutex));
+		fprintf(stderr, "2: Ticket Type %zu bytes\n", sizeof(Ticket));
+		fprintf(stderr, "3: MCS Type %zu bytes\n", sizeof(MCS));
+		fprintf(stderr, "4: FAA64 type %zu bytes\n", sizeof(FAA64));
+		fprintf(stderr, "5: FAA32 type %zu bytes\n", sizeof(FAA32));
+		fprintf(stderr, "6: FAA16 type %zu bytes\n", sizeof(FAA16));
 	}
 
 	if (argc > 1)
@@ -531,7 +531,7 @@ HANDLE *threads;
 	  param->idx = idx;
 #ifdef unix
 	  if( pthread_create (threads + idx, NULL, testit, (void *)param) )
-		fprintf(stderr, "Unable to create thread %d, errno = %d\n", idx, errno);
+		fprintf(stderr, "Unable to create thread %d, errno = %d\n", idx, (int)errno);
 #else
 	  do threads[idx] = (HANDLE)_beginthreadex(NULL, 131072, testit, (void *)param, 0, NULL);
 	  while ((int64_t)threads[idx] == -1 && (SwitchToThread(), 1));

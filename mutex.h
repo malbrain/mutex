@@ -9,12 +9,9 @@ typedef enum {
 	CONTESTED
 } MutexState;
 
-typedef volatile struct {
-#ifdef FUTEX
+typedef volatile union {
 	MutexState state[1];
-#else
 	char lock[1];
-#endif
 } Mutex;
 
 typedef struct {
