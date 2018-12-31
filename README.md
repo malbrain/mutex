@@ -14,12 +14,8 @@ The Mutex structure is defined as:
     	CONTESTED
     } MutexState;
 
-    typedef volatile struct {
-    #ifdef FUTEX
-    	MutexState state[1];
-    #else
-    	char lock[1];
-    #endif
+    typedef volatile union {
+    	char state[1];
     } Mutex;
 
 The ticket latch uses two 16 bit shorts and is obtained and released by:
@@ -43,13 +39,27 @@ Define STANDLONE during compilation to perform basic benchmarks on your system:
     gcc -o mutex -g -O3 -D STANDALONE mutex.c -lpthread
     (or cl /Ox /D STANDAONE mutex.c)
 
-    ./mutex <# threads> <mutex type>
+    ./mutex <# threads> <mutex type> ...
 
-    Usage: ./mutex #threads #type
-    0: System Type 40 bytes
-    1: Mutex Type 4 bytes
-    2: Ticket Type 4 bytes
-    3: MCS Type 16 bytes
+C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex
+	Usage: x64\release\mutex #threads #type ...
+	0: System Type 40 bytes
+	1: Mutex Type 1 bytes
+	2: Ticket Type 4 bytes
+	3: MCS Type 16 bytes
+	4: FAA64 type 8 bytes
+	5: FAA32 type 4 bytes
+	6: FAA16 type 2 bytes
+	real 99ns
+	user 395ns
+ 	sys  0ns
+	nanosleeps 0
+
+C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex 4 4
+	real 19ns
+	user 72ns
+	sys  0ns
+	nanosleeps 0
 
 Sample linux 64 bit output (non-FUTEX):
 
