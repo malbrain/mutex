@@ -282,14 +282,14 @@ MCS *next;
 void mutex_lock(Mutex* mutex) {
 uint32_t spinCount = 0;
 
-  while (_InterlockedOr8(mutex->lock, 1) & 1)
-	while (*mutex->lock & 1)
+  while (_InterlockedOr8(mutex->state, 1) & 1)
+	while (*mutex->state & 1)
 	  if (lock_spin(&spinCount))
 		lock_sleep(spinCount);
 }
 
 void mutex_unlock(Mutex* mutex) {
-	*mutex->lock = 0;
+	*mutex->state = 0;
 }
 
 
@@ -455,14 +455,14 @@ fprintf(stderr, "thread %lld type %d\n", threadno, type);
 
 	  if (type > MCSType)
 		  continue;
-
+#ifdef VALIDATE
 	  first = Array[0];
 
 	  for (idx = 0; idx < 255; idx++)
 		Array[idx] = Array[idx + 1];
 
 	  Array[255] = first;
-
+#endif
 	  if (type == MutexType)
 		mutex_unlock(mutex);
 	  else if (type == TicketType)
@@ -549,11 +549,11 @@ HANDLE *threads;
 		CloseHandle(threads[idx]);
 	}
 #endif
-
+#ifdef VALIDATE
 	for( idx = 0; idx < 256; idx++)
 	  if (Array[idx] != (unsigned char)(Array[(idx+1) % 256] - 1))
 		fprintf (stderr, "Array out of order\n");
-
+#endif
 	elapsed = getCpuTime(0) - start;
 	fprintf(stderr, " real %.0fns\n", elapsed * 10);
 	elapsed = getCpuTime(1);

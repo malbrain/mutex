@@ -10,8 +10,7 @@ typedef enum {
 } MutexState;
 
 typedef volatile union {
-	MutexState state[1];
-	char lock[1];
+	char state[1];
 } Mutex;
 
 typedef struct {
