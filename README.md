@@ -41,8 +41,8 @@ Define STANDLONE during compilation to perform basic benchmarks on your system:
 
     ./mutex <# threads> <mutex type> ...
 
-C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex
-	Usage: x64\release\mutex #threads #type ...
+	x64/release/mutex
+	Usage: x64/release/mutex #threads #type ...
 	0: System Type 40 bytes
 	1: Mutex Type 1 bytes
 	2: Ticket Type 4 bytes
@@ -55,7 +55,7 @@ C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex
  	sys  0ns
 	nanosleeps 0
 
-C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex 4 4
+	x64/release/mutex 4 4
 	real 19ns
 	user 72ns
 	sys  0ns
