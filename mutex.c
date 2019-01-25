@@ -1,4 +1,4 @@
-//  mutex, MCS and ticket lock implmentation
+//  Mutex, MCS and ticket lock implmentation
 
 //  please report bugs located to the program author,
 //  malbrain@cal.berkeley.edu
@@ -17,6 +17,14 @@
 #endif
 
 #include "mutex.h"
+
+bool atomicCAS8(volatile uint8_t *dest, uint8_t value, uint8_t comp) {
+#ifdef _WIN32
+    return _InterlockedCompareExchange8 (dest, value, comp) == comp;
+#else
+    return __sync_bool_compare_and_swap (dest, comp, value);
+#endif
+}
 
 #ifdef FUTEX
 #include <linux/futex.h>
@@ -289,7 +297,22 @@ uint32_t spinCount = 0;
 }
 
 void mutex_unlock(Mutex* mutex) {
+	MemoryBarrier();
 	*mutex->state = 0;
+}
+
+void CAS_lock(CAS* cas) {
+uint32_t spinCount = 0;
+
+  while (!atomicCAS8(cas->state, 1, 0))
+	while (*cas->state & 1)
+	  if (lock_spin(&spinCount))
+		lock_sleep(spinCount);
+}
+
+void CAS_unlock(CAS* cas) {
+	MemoryBarrier();
+	*cas->state = 0;
 }
 
 
@@ -315,6 +338,7 @@ pthread_mutex_t sysmutex[1] = {PTHREAD_MUTEX_INITIALIZER};
 unsigned char Array[256] __attribute__((aligned(64)));
 Ticket ticket[1] __attribute__((aligned(64)));
 Mutex mutex[1] __attribute__((aligned(64)));
+CAS cas[1] __attribute__((aligned(64)));
 uint64_t FAA64[1]  __attribute__((aligned(64)));
 uint32_t FAA32[1] __attribute__((aligned(64)));
 uint16_t FAA16[1] __attribute__((aligned(64)));
@@ -323,6 +347,7 @@ uint16_t FAA16[1] __attribute__((aligned(64)));
 __declspec(align(64)) unsigned char Array[256];
 __declspec(align(64)) Ticket ticket[1];
 __declspec(align(64)) Mutex mutex[1];
+__declspec(align(64)) CAS cas[1];
 
 __declspec(align(64)) uint64_t FAA64[1];
 __declspec(align(64)) uint32_t FAA32[1];
@@ -339,6 +364,7 @@ typedef enum {
 	MutexType,
 	TicketType,
 	MCSType,
+	CASType,
 	FAA64Type,
 	FAA32Type,
 	FAA16Type
@@ -440,6 +466,8 @@ fprintf(stderr, "thread %lld type %d\n", threadno, type);
 #endif
 	  if (type == MutexType)
 		mutex_lock(mutex);
+	  else if (type == CASType)
+		CAS_lock(cas);
 	  else if (type == TicketType)
 		ticket_lock(ticket);
 	  else if (type == SystemType)
@@ -465,6 +493,8 @@ fprintf(stderr, "thread %lld type %d\n", threadno, type);
 #endif
 	  if (type == MutexType)
 		mutex_unlock(mutex);
+	  else if (type == CASType)
+		CAS_unlock(cas);
 	  else if (type == TicketType)
 		ticket_unlock(ticket);
 	  else if (type == SystemType)
@@ -507,9 +537,10 @@ HANDLE *threads;
 		fprintf(stderr, "1: Mutex Type %zu bytes\n", sizeof(Mutex));
 		fprintf(stderr, "2: Ticket Type %zu bytes\n", sizeof(Ticket));
 		fprintf(stderr, "3: MCS Type %zu bytes\n", sizeof(MCS));
-		fprintf(stderr, "4: FAA64 type %zu bytes\n", sizeof(FAA64));
-		fprintf(stderr, "5: FAA32 type %zu bytes\n", sizeof(FAA32));
-		fprintf(stderr, "6: FAA16 type %zu bytes\n", sizeof(FAA16));
+		fprintf(stderr, "4: CAS Type %zu bytes\n", sizeof(CAS));
+		fprintf(stderr, "5: FAA64 type %zu bytes\n", sizeof(FAA64));
+		fprintf(stderr, "6: FAA32 type %zu bytes\n", sizeof(FAA32));
+		fprintf(stderr, "7: FAA16 type %zu bytes\n", sizeof(FAA16));
 	}
 
 	if (argc > 1)

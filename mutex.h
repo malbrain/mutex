@@ -2,12 +2,17 @@
 #define _MUTEX_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef enum {
 	FREE = 0,
 	LOCKED,
 	CONTESTED
 } MutexState;
+
+typedef volatile union {
+	char state[1];
+} CAS;
 
 typedef volatile union {
 	char state[1];
@@ -37,6 +42,8 @@ typedef struct {
 #endif
 } MCS;
 
+void cas_lock(CAS *cas);
+void cas_unlock(CAS *cas);
 void mcs_lock(MCS **mutex, MCS *qnode);
 void mcs_unlock(MCS **mutex, MCS *qnode);
 void mutex_lock(Mutex* mutex);

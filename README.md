@@ -37,29 +37,54 @@ Compile with -D FUTEX to use futex contention on linux.
 Define STANDLONE during compilation to perform basic benchmarks on your system:
 
     gcc -o mutex -g -O3 -D STANDALONE mutex.c -lpthread
-    (or cl /Ox /D STANDAONE mutex.c)
+    (or cl /Ox /D STANDALONE mutex.c)
 
     ./mutex <# threads> <mutex type> ...
 
 	x64/release/mutex
 	Usage: x64/release/mutex #threads #type ...
-	0: System Type 40 bytes
-	1: Mutex Type 1 bytes
-	2: Ticket Type 4 bytes
-	3: MCS Type 16 bytes
-	4: FAA64 type 8 bytes
-	5: FAA32 type 4 bytes
-	6: FAA16 type 2 bytes
-	real 99ns
-	user 395ns
- 	sys  0ns
-	nanosleeps 0
 
-	x64/release/mutex 4 4
-	real 19ns
-	user 72ns
-	sys  0ns
-	nanosleeps 0
+Usage: mutex.exe #threads #type ...
+0: System Type 40 bytes
+1: Mutex Type 1 bytes
+2: Ticket Type 4 bytes
+3: MCS Type 16 bytes
+4: CAS Type 1 bytes
+5: FAA64 type 8 bytes
+6: FAA32 type 4 bytes
+7: FAA16 type 2 bytes
+
+
+C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 1 0
+ real 14ns
+ user 14ns
+ sys  0ns
+ nanosleeps 0
+
+C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 1 1
+ real 7ns
+ user 7ns
+ sys  0ns
+ nanosleeps 0
+
+C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 4 1
+ real 7ns
+ user 16ns
+ sys  8ns
+ nanosleeps 3666
+
+C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 4 0
+ real 85ns
+ user 330ns
+ sys  0ns
+ nanosleeps 0
+
+C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 4 4
+ real 17ns
+ user 62ns
+ sys  0ns
+ nanosleeps 0
+
 
 Sample linux 64 bit output (non-FUTEX):
 
