@@ -107,5 +107,32 @@ C:\Users\Owner\Source\Repos\malbrain\mutex>mutex.exe 8 4
  sys  36ns
  nanosleeps 16149
 
+WIN64 CAS mutex times per lock/unlock basic one byte CAS mutex
+from 1 to 8 threads and FUTEX contention handling
+
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 1 1
+ real 11ns
+ user 11ns
+ sys  0ns
+ futex waits: 0
+ nanosleeps 0
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 2 1
+ real 11ns
+ user 22ns
+ sys  0ns
+ futex waits: 825
+ nanosleeps 0
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 4 1
+ real 13ns
+ user 48ns
+ sys  0ns
+ futex waits: 2471
+ nanosleeps 0
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 8 1
+ real 19ns
+ user 131ns
+ sys  0ns
+ futex waits: 1869
+
 
 Please address any questions or concerns to the program author: Karl Malbrain, malbrain@cal.berkeley.edu.
