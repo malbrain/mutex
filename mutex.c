@@ -18,7 +18,7 @@
 
 #include "mutex.h"
 
-bool atomicCAS8(volatile uint8_t *dest, uint8_t value, uint8_t comp) {
+bool atomicCAS8(uint8_t volatile *dest, uint8_t value, uint8_t comp) {
 #ifdef _WIN32
     return _InterlockedCompareExchange8 (dest, value, comp) == comp;
 #else
@@ -145,7 +145,7 @@ void mutex_lock(Mutex *mutex) {
 MutexState c, nxt =  LOCKED;
 uint32_t spinCount = 0;
 
-  while (__sync_val_compare_and_swap(mutex->state, FREE, nxt) != FREE)
+  while (!__sync_bool_compare_and_swap(mutex->state, FREE, nxt))
 	while ((c = *mutex->state) != FREE)
 	  if (lock_spin (&spinCount))
 #ifndef FUTEX
@@ -165,17 +165,30 @@ uint32_t spinCount = 0;
 }
 
 void mutex_unlock(Mutex* mutex) {
-	asm volatile ("" ::: "memory");
-
 #ifdef FUTEX
 	if (__sync_fetch_and_sub(mutex->state, 1) == CONTESTED)  {
    		*mutex->state = FREE;
  		sys_futex( (void *)mutex->state, FUTEX_WAKE, 1, NULL, NULL, 0);
 	}
 #else
-	*mutex->state = FREE;
+	*mutex->state = 0;
 #endif
 }
+
+void CAS_lock(CAS* cas) {
+uint32_t spinCount = 0;
+
+  while (!atomicCAS8(cas->state, 1, 0))
+	while (*cas->state & 1)
+	  if (lock_spin(&spinCount))
+		lock_sleep(spinCount);
+}
+
+void CAS_unlock(CAS* cas) {
+	asm volatile ("" ::: "memory");
+	*cas->state = 0;
+}
+
 
 void ticket_lock(Ticket* ticket) {
 uint32_t spinCount = 0;
@@ -481,7 +494,7 @@ fprintf(stderr, "thread %lld type %d\n", threadno, type);
 	  else if (type == FAA16Type)
 		  faa_time(16,16);
 
-	  if (type > MCSType)
+	  if (type > CASType)
 		  continue;
 #ifdef VALIDATE
 	  first = Array[0];

@@ -55,94 +55,57 @@ Usage: mutex.exe #threads #type ...
 7: FAA16 type 2 bytes
 
 
-C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 1 0
- real 14ns
- user 14ns
- sys  0ns
- nanosleeps 0
+Linux on windows 10 64 bit times per lock/unlock basic one byte mutex
+from 1 to 8 threads
 
-C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 1 1
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 1 1
  real 7ns
  user 7ns
  sys  0ns
  nanosleeps 0
-
-C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 4 1
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 2 1
  real 7ns
- user 16ns
- sys  8ns
- nanosleeps 3666
+ user 8ns
+ sys  0ns
+ nanosleeps 951
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 4 1
+ real 7ns
+ user 10ns
+ sys  0ns
+ nanosleeps 4272
+karl@DESKTOP-8G6NRQ9:/mnt/c/Users/Owner/Source/Repos/malbrain/mutex$ ./a.out 8 1
+ real 8ns
+ user 27ns
+ sys  1ns
+ nanosleeps 10093
 
-C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 4 0
- real 85ns
- user 330ns
+
+WIN64 CAS mutex times per lock/unlock basic one byte CAS mutex
+from 1 to 8 threads
+
+C:\Users\Owner\Source\Repos\malbrain\mutex>mutex.exe 1 4
+ real 11ns
+ user 11ns
  sys  0ns
  nanosleeps 0
 
-C:\Users\Owner\Source\Repos\malbrain\mutex>x64\release\mutex.exe 4 4
- real 17ns
- user 62ns
- sys  0ns
- nanosleeps 0
+C:\Users\Owner\Source\Repos\malbrain\mutex>mutex.exe 2 4
+ real 11ns
+ user 17ns
+ sys  4ns
+ nanosleeps 1172
 
+C:\Users\Owner\Source\Repos\malbrain\mutex>mutex.exe 4 4
+ real 11ns
+ user 21ns
+ sys  9ns
+ nanosleeps 2135
 
-Sample linux 64 bit output (non-FUTEX):
+C:\Users\Owner\Source\Repos\malbrain\mutex>mutex.exe 8 4
+ real 14ns
+ user 54ns
+ sys  36ns
+ nanosleeps 16149
 
-
-    [root@test7x64 xlink]# ./mutex 2 1
-     real 42ns
-     user 85ns
-     sys  0ns
-     nanosleeps 84
-
-    [root@test7x64 xlink]# ./mutex 20 1
-     real 34ns
-     user 93ns
-     sys  1ns
-     nanosleeps 347934
-
-    [root@test7x64 xlink]# ./mutex 200 1
-     real 36ns
-     user 132ns
-     sys  8ns
-     nanosleeps 938255
-
-    [root@test7x64 xlink]# ./mutex 2000 1
-     real 35ns
-     user 131ns
-     sys  9ns
-     nanosleeps 921295
-
-Sample linux output (FUTEX):
-
-    [root@test7x64 xlink]# cc -o mutex -g -O3 -D STANDALONE -D FUTEX mutex.c -lpthread
-
-    [root@test7x64 xlink]# ./mutex 2 1
-     real 66ns
-     user 132ns
-     sys  0ns
-     futex waits: 3
-     nanosleeps 0
-
-    [root@test7x64 xlink]# ./mutex 20 1
-     real 120ns
-     user 475ns
-     sys  0ns
-     futex waits: 22728
-     nanosleeps 0
-
-    [root@test7x64 xlink]# ./mutex 200 1
-     real 119ns
-     user 471ns
-     sys  1ns
-     futex waits: 38041
-     nanosleeps 0
-
-    [root@test7x64 xlink]# ./mutex 2000 1
-     real 121ns
-     user 478ns
-     sys  2ns
-     futex waits: 49069
-     nanosleeps 0
 
 Please address any questions or concerns to the program author: Karl Malbrain, malbrain@cal.berkeley.edu.
