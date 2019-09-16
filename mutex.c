@@ -1,4 +1,4 @@
-//  Mutex, MCS and ticket lock implmentation
+//  Mutex, CAS, MCS and ticket lock implmentation
 
 //  please report bugs located to the program author,
 //  malbrain@cal.berkeley.edu
@@ -6,19 +6,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winbase.h>
-#include <process.h>
-#else
-#include <pthread.h>
-#endif
+#include <time.h>
 
 #include "mutex.h"
 
-bool atomicCAS8(uint8_t volatile *dest, uint8_t value, uint8_t comp) {
+bool MutexAtomicCAS8(volatile char *dest, uint8_t value, uint8_t comp) {
 #ifdef _WIN32
     return _InterlockedCompareExchange8 (dest, value, comp) == comp;
 #else
@@ -44,8 +36,7 @@ uint64_t FutexCnt[1];
 
 int NanoCnt[1];
 
-#ifdef unix
-#define pause() asm volatile("pause\n": : : "memory")
+#ifndef _WIN32
 
 void lock_sleep (int cnt) {
 struct timespec ts[1];
@@ -56,8 +47,8 @@ struct timespec ts[1];
 	__sync_fetch_and_add(NanoCnt, 1);
 }
 
-int lock_spin (int *cnt) {
-volatile int idx;
+int lock_spin (uint32_t *cnt) {
+int idx;
 
 	if (!*cnt)
 	  *cnt = 8;
@@ -73,12 +64,9 @@ volatile int idx;
 	return 0;
 }
 
-#define system_lock(mutex) pthread_mutex_lock(mutex)
-#define system_unlock(mutex) pthread_mutex_unlock(mutex)
-
-void mcs_lock (MCS **lock, MCS *qnode) {
+void mcs_lock (MCSMutex **lock, MCSMutex *qnode) {
 uint32_t spinCount = 0;
-MCS *predecessor;
+MCSMutex *predecessor;
 
 	qnode->next = NULL;
 	*qnode->lock = 0;
@@ -113,9 +101,9 @@ MCS *predecessor;
 	}
 }
 
-void mcs_unlock (MCS **lock, MCS *qnode) {
+void mcs_unlock (MCSMutex **lock, MCSMutex *qnode) {
 uint32_t spinCount = 0;
-MCS *next;
+MCSMutex *next;
 
 	//	is there no next queue entry?
 
@@ -132,7 +120,12 @@ MCS *next;
 
 	// turn off lock bit and wake up next queue entry
 
-	next = (MCS *)qnode->next;
+#ifdef _WIN32
+	MemoryBarrier();
+#else
+	__sync_synchronize();
+#endif
+	next = (MCSMutex *)qnode->next;
 	*next->lock = 0;
 
 #ifdef FUTEX
@@ -141,7 +134,7 @@ MCS *next;
 #endif
 }
 
-void mutex_lock(Mutex *mutex) {
+void KM_lock(KMMutex *mutex) {
 MutexState c, nxt =  LOCKED;
 uint32_t spinCount = 0;
 
@@ -164,33 +157,41 @@ uint32_t spinCount = 0;
 #endif
 }
 
-void mutex_unlock(Mutex* mutex) {
+void KM_unlock(KMMutex* mutex) {
 #ifdef FUTEX
 	if (__sync_fetch_and_sub(mutex->state, 1) == CONTESTED)  {
    		*mutex->state = FREE;
  		sys_futex( (void *)mutex->state, FUTEX_WAKE, 1, NULL, NULL, 0);
 	}
 #else
+#ifdef _WIN32
+	MemoryBarrier();
+#else
+	__sync_synchronize();
+#endif
 	*mutex->state = 0;
 #endif
 }
 
-void CAS_lock(CAS* cas) {
+void CAS_lock(CASMutex* cas) {
 uint32_t spinCount = 0;
 
-  while (!atomicCAS8(cas->state, 1, 0))
+  while (!MutexAtomicCAS8(cas->state, 1, 0))
 	while (*cas->state & 1)
 	  if (lock_spin(&spinCount))
 		lock_sleep(spinCount);
 }
 
-void CAS_unlock(CAS* cas) {
-	asm volatile ("" ::: "memory");
+void CAS_unlock(CASMutex* cas) {
+#ifdef _WIN32
+	MemoryBarrier();
+#else
+	__sync_synchronize();
+#endif
 	*cas->state = 0;
 }
 
-
-void ticket_lock(Ticket* ticket) {
+void ticket_lock(TicketMutex* ticket) {
 uint32_t spinCount = 0;
 uint16_t ours;
 
@@ -201,8 +202,12 @@ uint16_t ours;
 		lock_sleep (spinCount);
 }
 
-void ticket_unlock(Ticket* ticket) {
-	asm volatile ("" ::: "memory");
+void ticket_unlock(TicketMutex* ticket) {
+#ifdef _WIN32
+	MemoryBarrier();
+#else
+	__sync_synchronize();
+#endif
 	ticket->serving[0]++;
 }
 
@@ -245,8 +250,8 @@ volatile uint32_t idx;
 	return 0;
 }
 
-void mcs_lock (MCS **lock, MCS *qnode) {
-MCS *predecessor;
+void mcs_lock (MCSMutex **lock, MCSMutex *qnode) {
+MCSMutex *predecessor;
 
 	qnode->next = NULL;
 
@@ -270,9 +275,9 @@ MCS *predecessor;
 	WaitForSingleObject(qnode->wait, INFINITE);
 }
 
-void mcs_unlock (MCS **lock, MCS *qnode) {
+void mcs_unlock (MCSMutex **lock, MCSMutex *qnode) {
 uint32_t spinCount = 0;
-MCS *next;
+MCSMutex *next;
 
 	//	is there no next queue entry?
 
@@ -281,7 +286,7 @@ MCS *next;
 		if (_InterlockedCompareExchangePointer (lock, NULL, qnode) == qnode)
 			return;
 #	  else
-		if ((MCS *)_InterlockedCompareExchange (lock, NULL, qnode) == qnode)
+		if ((MCSMutex *)_InterlockedCompareExchange (lock, NULL, qnode) == qnode)
 			return;
 #	  endif
 
@@ -293,14 +298,11 @@ MCS *next;
 
 	// wake up next entry in wait chain
 
-	next = (MCS *)qnode->next;
+	next = (MCSMutex *)qnode->next;
 	SetEvent(next->wait);
 }
 
-#define system_lock(mutex)	EnterCriticalSection(mutex)
-#define system_unlock(mutex) LeaveCriticalSection(mutex)
-
-void mutex_lock(Mutex* mutex) {
+void KM_lock(MyMutex* mutex) {
 uint32_t spinCount = 0;
 
   while (_InterlockedOr8(mutex->state, 1) & 1)
@@ -309,25 +311,28 @@ uint32_t spinCount = 0;
 		lock_sleep(spinCount);
 }
 
-void mutex_unlock(Mutex* mutex) {
+void KM_unlock(MyMutex* mutex) {
 	MemoryBarrier();
 	*mutex->state = 0;
 }
 
-void CAS_lock(CAS* cas) {
+void CAS_lock(CASMutex* cas) {
 uint32_t spinCount = 0;
 
-  while (!atomicCAS8(cas->state, 1, 0))
+  while (!MutexAtomicCAS8(cas->state, 1, 0))
 	while (*cas->state & 1)
 	  if (lock_spin(&spinCount))
 		lock_sleep(spinCount);
 }
 
-void CAS_unlock(CAS* cas) {
+void CAS_unlock(CASMutex* cas) {
 	MemoryBarrier();
 	*cas->state = 0;
 }
 
+#endif
+
+#if HAVEMUTEX == 2
 
 void ticket_lock(Ticket* ticket) {
 uint32_t spinCount = 0;
@@ -345,12 +350,15 @@ void ticket_unlock(Ticket* ticket) {
 }
 #endif
 
+#if HAVEMUTEX == 2
+#endif
+
 #ifdef STANDALONE
 #ifdef unix
 pthread_mutex_t sysmutex[1] = {PTHREAD_MUTEX_INITIALIZER};
 unsigned char Array[256] __attribute__((aligned(64)));
 Ticket ticket[1] __attribute__((aligned(64)));
-Mutex mutex[1] __attribute__((aligned(64)));
+KMMutex mutex[1] __attribute__((aligned(64)));
 CAS cas[1] __attribute__((aligned(64)));
 uint64_t FAA64[1]  __attribute__((aligned(64)));
 uint32_t FAA32[1] __attribute__((aligned(64)));
@@ -359,7 +367,7 @@ uint16_t FAA16[1] __attribute__((aligned(64)));
 #else
 __declspec(align(64)) unsigned char Array[256];
 __declspec(align(64)) Ticket ticket[1];
-__declspec(align(64)) Mutex mutex[1];
+__declspec(align(64)) KMMutex mutex[1];
 __declspec(align(64)) CAS cas[1];
 
 __declspec(align(64)) uint64_t FAA64[1];
@@ -547,7 +555,7 @@ HANDLE *threads;
 	if (argc == 1) {
 		fprintf(stderr, "Usage: %s #threads #type ...\n", argv[0]);
 		fprintf(stderr, "0: System Type %zu bytes\n", sizeof(sysmutex));
-		fprintf(stderr, "1: Mutex Type %zu bytes\n", sizeof(Mutex));
+		fprintf(stderr, "1: KMMutex Type %zu bytes\n", sizeof(KMMutex));
 		fprintf(stderr, "2: Ticket Type %zu bytes\n", sizeof(Ticket));
 		fprintf(stderr, "3: MCS Type %zu bytes\n", sizeof(MCS));
 		fprintf(stderr, "4: CAS Type %zu bytes\n", sizeof(CAS));
