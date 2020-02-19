@@ -3,6 +3,7 @@
 //  please report bugs located to the program author,
 //  malbrain@cal.berkeley.edu
 
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
